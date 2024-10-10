@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "create table if not exists accounts (\n                id serial primary key,\n                ciphertext bytea not null,\n                nonce bytea not null,\n                die_at bigint not null\n            );",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4b239d0c3814151a2e1dc8762ea0f9643fa837fd4ae6df8a77268a23b01fd97d"
+}
