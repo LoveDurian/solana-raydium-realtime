@@ -275,6 +275,7 @@ fn swap_compute(
     Ok((state.amount_calculated, tick_array_start_index_vec))
 }
 
+// 根据滑点（slippage）和方向（是否向上取整 round_up），计算交易时考虑滑点后的金额（amount_with_slippage）
 pub fn amount_with_slippage(amount: u64, slippage: f64, round_up: bool) -> u64 {
     if round_up {
         (amount as f64).mul(1_f64 + slippage).ceil() as u64
@@ -349,10 +350,35 @@ pub fn swap_v2_instr(
     Ok(instructions)
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SimulateDebugResult {
+    pub simulation: serde_json::Value,
+    pub debug: DebugSwapParams,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DebugSwapParams {
+    pub amm_config: String,
+    pub pool_id: String,
+    pub input_vault: String,
+    pub output_vault: String,
+    pub observation_state: String,
+    pub user_input_token: String,
+    pub user_output_token: String,
+    pub input_vault_mint: String,
+    pub output_vault_mint: String,
+    pub remaining_accounts: Vec<String>,
+    pub amount: u64,
+    pub other_amount_threshold: u64,
+    pub sqrt_price_limit_x64: Option<u128>,
+    pub is_base_input: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TransactionResult {
     Simulate(RpcSimulateTransactionResult),
+    SimulateDebug(SimulateDebugResult),
     Send(String),
 }
 

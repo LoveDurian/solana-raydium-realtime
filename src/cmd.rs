@@ -27,17 +27,16 @@ enum Commands {
     #[command(subcommand)]
     New(NewCommands),
     Server {
-        /// Masterkey, used to encrypt the account secrets
-        #[arg(long, value_parser = parse_masterkey)]
-        masterkey: std::vec::Vec<u8>,
         /// Solana RPC URL, can be anythin as long as it's a valid RPC URL and https://
         #[arg(short, long)]
         rpc: String,
         /// Raydium CLMM program ID, useful for testing on devnet
         #[arg(long, default_value = crate::constants::RAYDIUM_CLMM_PUBKEY)]
         raydium_clmm: String,
-        #[arg(long)]
-        jwt_secret: String,
+        // #[arg(long, value_parser = parse_masterkey)]
+        // masterkey: std::vec::Vec<u8>,
+        // #[arg(long)]
+        // jwt_secret: String,
     },
 }
 
@@ -50,11 +49,10 @@ enum NewCommands {
         /// How long this account will be valid for
         #[arg(long, value_parser = parse_duration)]
         duration: chrono::Duration,
-        /// Masterkey, used to encrypt the account secrets
-        #[arg(long, value_parser = parse_masterkey)]
-        masterkey: std::vec::Vec<u8>,
-        #[arg(long)]
-        jwt_secret: String,
+        // #[arg(long, value_parser = parse_masterkey)]
+        // masterkey: std::vec::Vec<u8>,
+        // #[arg(long)]
+        // jwt_secret: String,
     },
 }
 
@@ -69,17 +67,13 @@ impl Cmd {
     pub async fn process(&self) -> anyhow::Result<()> {
         match &self.command {
             Some(Commands::Server {
-                masterkey,
                 rpc,
                 raydium_clmm,
-                jwt_secret,
             }) => {
                 let pool = create_pool(&self.database_url).await?;
                 let state = AppState::new(
                     rpc.to_string(),
                     pool,
-                    jwt_secret.clone(),
-                    masterkey.clone(),
                     Pubkey::from_str(raydium_clmm).expect("RAYDIUM_CLMM_PUBKEY invalid"),
                 )
                 .await
@@ -101,18 +95,12 @@ impl Cmd {
                 }
                 NewCommands::Wallet {
                     duration,
-                    masterkey,
-                    jwt_secret,
                 } => {
                     let pool = create_pool(&self.database_url).await?;
-                    let mut account = Account::new_unique(masterkey, *duration).unwrap();
+                    let mut account = Account::new_unique(&[], *duration).unwrap();
                     let id = account.save(&pool).await?;
                     println!("Account id: {}", id);
                     println!("Public key: {}", account.pubkey());
-                    println!(
-                        "Access token: {}",
-                        account.access_token(jwt_secret.as_bytes())?
-                    );
                 }
             },
             None => todo!(),

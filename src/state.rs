@@ -14,8 +14,8 @@ pub struct AppState {
     pub rpc: Arc<RpcClient>,
     pub broadcast: Arc<Mutex<ClmmBroadcast>>,
     pub pool: PgPool,
-    pub jwt_secret: String,
-    pub masterkey: Vec<u8>,
+    // pub jwt_secret: String,
+    // pub masterkey: Vec<u8>,
     pub raydium_program_id: Pubkey,
 }
 
@@ -23,8 +23,8 @@ impl AppState {
     pub async fn new(
         solana_url: String,
         pool: PgPool,
-        jwt_secret: String,
-        masterkey: Vec<u8>,
+        // jwt_secret: String,
+        // masterkey: Vec<u8>,
         raydium_program_id: Pubkey,
     ) -> Result<Self> {
         let pubsub =
@@ -43,8 +43,8 @@ impl AppState {
             rpc,
             broadcast,
             pool,
-            jwt_secret,
-            masterkey,
+            // jwt_secret,
+            // masterkey,
             raydium_program_id,
         })
     }

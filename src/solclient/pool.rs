@@ -30,7 +30,8 @@ use tokio::{
 
 use crate::solclient::utils::{amount_with_slippage, swap_v2_instr};
 
-use super::utils::{self, TransactionResult};
+use super::utils::{self, TransactionResult, SimulateDebugResult, DebugSwapParams};
+use serde::Serialize;
 
 #[derive(Clone)]
 pub struct Pool {
@@ -90,6 +91,7 @@ impl Pool {
         rpc: Arc<RpcClient>,
         raydium_program_id: &Pubkey,
         accounts: LoadPoolAccounts,
+        zero_for_one: bool,
     ) -> anyhow::Result<Self> {
         // load mult account
         let load_accounts = vec![
@@ -117,7 +119,8 @@ impl Pool {
                 tickarray_bitmap_extension_account.as_ref().unwrap(),
             )?;
 
-        let zero_for_one = true;
+        // let zero_for_one = true;
+        println!("zero_for_one: {}", zero_for_one);
 
         // load tick_arrays
         let tick_arrays = load_cur_and_next_five_tick_array(
@@ -269,26 +272,37 @@ impl Pool {
         slippage: f64,
         is_base_input: bool,
         simulate: bool,
+        zero_for_one: bool,
+        fee_bps: Option<u64>,
     ) -> anyhow::Result<TransactionResult> {
         let load_accounts = vec![input_token, output_token];
         let rsps = rpc.get_multiple_accounts(&load_accounts).await?;
         let epoch = rpc.get_epoch_info().await?.epoch;
         let [user_input_account, user_output_account] = array_ref![rsps, 0, 2];
 
-        let mut user_input_token_data = user_input_account.clone().unwrap().data;
-        let user_input_state =
-            StateWithExtensionsMut::<TokenAccount>::unpack(&mut user_input_token_data)?;
-        let mut user_output_token_data = user_output_account.clone().unwrap().data;
-        let user_output_state =
-            StateWithExtensionsMut::<TokenAccount>::unpack(&mut user_output_token_data)?;
+        println!("=== user_input_account ===");
+        println!("user_input_account: {:?}", user_input_account);
+        println!("=== user_output_account ===");
+        println!("user_output_account: {:?}", user_output_account);
+        
+        // let mut user_input_token_data = user_input_account.clone().unwrap().data;
+        // let user_input_state =
+        //     StateWithExtensionsMut::<TokenAccount>::unpack(&mut user_input_token_data)?;
+        // let mut user_output_token_data = user_output_account.clone().unwrap().data;
+        // let user_output_state =
+        //     StateWithExtensionsMut::<TokenAccount>::unpack(&mut user_output_token_data)?;
 
         let mut mint0 = self.mint0.clone();
         let mut mint1 = self.mint1.clone();
         let mint0_state = StateWithExtensionsMut::<Mint>::unpack(&mut mint0)?;
         let mint1_state = StateWithExtensionsMut::<Mint>::unpack(&mut mint1)?;
 
-        let zero_for_one = user_input_state.base.mint == self.state.token_mint_0
-            && user_output_state.base.mint == self.state.token_mint_1;
+        // let zero_for_one = user_input_state.base.mint == self.state.token_mint_0
+        //     && user_output_state.base.mint == self.state.token_mint_1;
+
+        // 前端传入zero_for_one，默认true
+        // let zero_for_one = false;
+        println!("Using zero_for_one = {}", zero_for_one);
 
         let transfer_fee = if is_base_input {
             if zero_for_one {
@@ -299,6 +313,7 @@ impl Pool {
         } else {
             0
         };
+        // 计算 amount_specified，这个值就是用户输入的金额，减去手续费，只有spltoekn 2022代币才有手续费
         let amount_specified = amount.checked_sub(transfer_fee).unwrap();
         // load tick_arrays
         let mut tick_arrays = load_cur_and_next_five_tick_array(
@@ -313,6 +328,7 @@ impl Pool {
 
         let mut sqrt_price_limit_x64 = None;
 
+        // 计算基础输出值other_amount_threshold，根据当前池子信息，计算swap最终收到的多少目标代币，还没有考虑滑点
         let (mut other_amount_threshold, tick_array_indexs) =
             utils::get_out_put_amount_and_remaining_accounts(
                 amount_specified,
@@ -326,12 +342,23 @@ impl Pool {
             )
             .unwrap();
 
+        // 考虑滑点、自定义手续费和spltoken 2022代币的手续费之后，计算最终的输出值other_amount_threshold
         if is_base_input {
+            // 先计算自定义手续费
+            if let Some(fee_bps) = fee_bps {
+                let custom_fee = (other_amount_threshold as f64 * fee_bps as f64 / 10000.0) as u64;
+                other_amount_threshold = other_amount_threshold.saturating_sub(custom_fee);
+            }
             // calc mint out amount with slippage
             other_amount_threshold = amount_with_slippage(other_amount_threshold, slippage, false);
         } else {
             // calc max in with slippage
             other_amount_threshold = amount_with_slippage(other_amount_threshold, slippage, true);
+            // 添加自定义手续费
+            if let Some(fee_bps) = fee_bps {
+                let custom_fee = (other_amount_threshold as f64 * fee_bps as f64 / 10000.0) as u64;
+                other_amount_threshold = other_amount_threshold.saturating_add(custom_fee);
+            }
             // calc max in with transfer_fee
             let transfer_fee = if zero_for_one {
                 utils::get_transfer_inverse_fee(&mint0_state, epoch, other_amount_threshold)
@@ -372,11 +399,33 @@ impl Pool {
             .collect();
         remaining_accounts.append(&mut accounts);
         let mut instructions = Vec::new();
+        // 设置计算单元限制
         let request_inits_instr = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000_u32);
         instructions.push(request_inits_instr);
         let cluster = Cluster::Custom("".to_string(), "".to_string());
         let client = Client::new(cluster, &payer);
+        // 指定了调用的raydium clmm合约地址
         let clmm = client.program(*raydium_program_id)?;
+
+        let remaining_accounts_str = remaining_accounts.iter().map(|a| a.pubkey.to_string()).collect::<Vec<_>>();
+
+        println!("=== swap_v2_instr 参数打印 ===");
+        println!("clmm: {:?}", clmm.payer());
+        println!("amm_config: {:?}", self.state.amm_config);
+        println!("pool_id: {:?}", self.id);
+        println!("input_vault: {:?}", if zero_for_one { self.state.token_vault_0 } else { self.state.token_vault_1 });
+        println!("output_vault: {:?}", if zero_for_one { self.state.token_vault_1 } else { self.state.token_vault_0 });
+        println!("observation_state: {:?}", self.state.observation_key);
+        println!("user_input_token: {:?}", input_token);
+        println!("user_output_token: {:?}", output_token);
+        println!("input_vault_mint: {:?}", if zero_for_one { self.state.token_mint_0 } else { self.state.token_mint_1 });
+        println!("output_vault_mint: {:?}", if zero_for_one { self.state.token_mint_1 } else { self.state.token_mint_0 });
+        println!("remaining_accounts: {:?}", remaining_accounts);
+        println!("amount: {:?}", amount);
+        println!("other_amount_threshold: {:?}", other_amount_threshold);
+        println!("sqrt_price_limit_x64: {:?}", sqrt_price_limit_x64);
+        println!("is_base_input: {:?}", is_base_input);
+        println!("==============================");
 
         let swap_instr = swap_v2_instr(
             clmm,
@@ -425,7 +474,32 @@ impl Pool {
         if simulate {
             let ret = utils::simulate_transaction(&rpc, &txn, true, CommitmentConfig::confirmed())
                 .await?;
-            return Ok(TransactionResult::Simulate(ret.value));
+
+            // let remaining_accounts_str = remaining_accounts.iter().map(|a| a.pubkey.to_string()).collect::<Vec<_>>();
+            let debug_info = DebugSwapParams {
+                amm_config: self.state.amm_config.to_string(),
+                pool_id: self.id.to_string(),
+                input_vault: (if zero_for_one { self.state.token_vault_0 } else { self.state.token_vault_1 }).to_string(),
+                output_vault: (if zero_for_one { self.state.token_vault_1 } else { self.state.token_vault_0 }).to_string(),
+                observation_state: self.state.observation_key.to_string(),
+                user_input_token: input_token.to_string(),
+                user_output_token: output_token.to_string(),
+                input_vault_mint: (if zero_for_one { self.state.token_mint_0 } else { self.state.token_mint_1 }).to_string(),
+                output_vault_mint: (if zero_for_one { self.state.token_mint_1 } else { self.state.token_mint_0 }).to_string(),
+                remaining_accounts: remaining_accounts_str,
+                amount,
+                other_amount_threshold,
+                sqrt_price_limit_x64,
+                is_base_input,
+            };
+
+            let result = SimulateDebugResult {
+                simulation: serde_json::to_value(ret.value).unwrap(),
+                debug: debug_info,
+            };
+
+            return Ok(TransactionResult::SimulateDebug(result));
+            // return Ok(TransactionResult::Simulate(ret.value));
         }
 
         let signature = utils::send_txn(&rpc, &txn, true).await?;

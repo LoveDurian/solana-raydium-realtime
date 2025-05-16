@@ -74,6 +74,7 @@ impl ClmmBroadcast {
                 pool_id: pool_state,
                 tickarray_bitmap_extension: tick_array_bitmap_extension,
             },
+            true,
         )
         .await?;
         let (tx, rx) = broadcast::channel(10);
